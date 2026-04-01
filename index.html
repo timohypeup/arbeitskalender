@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Arbeitskalender">
+  <title>Arbeitskalender</title>
+  <style>
+    /* ========================================================
+       ARBEITSKALENDER — iPad Dashboard (Tagesansicht + Asana)
+       ======================================================== */
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      height: 100vh;
+      height: 100dvh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    /* --- Header --- */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.6rem 1.2rem;
+      border-bottom: 1px solid #1a1a2e;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .header-title {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .header-date {
+      font-size: 1.1rem;
+      opacity: 0.6;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1.2rem;
+    }
+
+    .clock {
+      font-size: 1.5rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      opacity: 0.9;
+    }
+
+    .legend {
+      display: flex;
+      gap: 0.8rem;
+      font-size: 0.85rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      opacity: 0.7;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* --- Ganztaegige Termine --- */
+    .allday-bar {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.4rem 1.2rem;
+      border-bottom: 1px solid #1a1a2e;
+      min-height: 2rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .allday-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.4;
+      margin-right: 0.3rem;
+    }
+
+    .allday-event {
+      border-radius: 4px;
+      padding: 0.15rem 0.6rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    /* --- Main Content: Kalender + Sidebar --- */
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* --- Tagesansicht (linke Seite) --- */
+    .day-view {
+      position: relative;
+      overflow: hidden;
+      border-right: 1px solid #1a1a2e;
+    }
+
+    .hour-grid {
+      position: absolute;
+      inset: 0;
+      padding: 0;
+    }
+
+    .hour-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      display: flex;
+      align-items: flex-start;
+      border-top: 1px solid #151525;
+    }
+
+    .hour-label {
+      width: 52px;
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #555;
+      padding: 0.2rem 0.5rem 0 0;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .hour-line {
+      flex: 1;
+    }
+
+    /* Events im Stundenraster */
+    .events-layer {
+      position: absolute;
+      top: 0;
+      left: 52px;
+      right: 8px;
+      bottom: 0;
+    }
+
+    .event {
+      position: absolute;
+      border-radius: 6px;
+      padding: 0.25rem 0.5rem;
+      color: #fff;
+      overflow: hidden;
+      cursor: default;
+      border-left: 3px solid rgba(255,255,255,0.3);
+    }
+
+    .event-time {
+      font-size: 0.7rem;
+      opacity: 0.85;
+      font-weight: 600;
+    }
+
+    .event-title {
+      font-size: 0.85rem;
+      font-weight: 500;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+
+    .event-cal {
+      font-size: 0.65rem;
+      opacity: 0.6;
+      margin-top: 0.1rem;
+    }
+
+    /* Kompakte Darstellung fuer kurze Events (<= 30 Min) */
+    .event.compact {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.1rem 0.5rem;
+    }
+
+    .event.compact .event-time {
+      flex-shrink: 0;
+    }
+
+    .event.compact .event-title {
+      font-size: 0.75rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Zeitindikator */
+    .time-indicator {
+      position: absolute;
+      left: 44px;
+      right: 0;
+      height: 2px;
+      background: #e94560;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .time-indicator::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: -5px;
+      width: 12px;
+      height: 12px;
+      background: #e94560;
+      border-radius: 50%;
+    }
+
+    /* --- Sidebar (rechte Seite: Asana To-Dos) --- */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 0.8rem;
+      gap: 0.8rem;
+      background: #0d0d14;
+    }
+
+    .sidebar-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .sidebar-heading {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.5;
+      padding: 0.2rem 0;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .sidebar-heading-icon {
+      font-size: 0.85rem;
+    }
+
+    .todo-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0.45rem 0.5rem;
+      border-radius: 6px;
+      background: #141420;
+      border: 1px solid #1a1a2e;
+    }
+
+    .todo-item.completed {
+      opacity: 0.4;
+    }
+
+    .todo-checkbox {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid #444;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .todo-item.completed .todo-checkbox {
+      background: #4ade80;
+      border-color: #4ade80;
+    }
+
+    .todo-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .todo-name {
+      font-size: 0.85rem;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .todo-item.completed .todo-name {
+      text-decoration: line-through;
+    }
+
+    .todo-due {
+      font-size: 0.7rem;
+      opacity: 0.5;
+      margin-top: 0.1rem;
+    }
+
+    .todo-due.overdue {
+      color: #ef4444;
+      opacity: 0.9;
+    }
+
+    .todo-due.today {
+      color: #f59e0b;
+      opacity: 0.9;
+    }
+
+    .todo-empty {
+      font-size: 0.85rem;
+      opacity: 0.3;
+      padding: 0.5rem;
+      text-align: center;
+    }
+
+    /* --- Footer --- */
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.3rem 1.2rem;
+      border-top: 1px solid #1a1a2e;
+      font-size: 0.75rem;
+      opacity: 0.4;
+    }
+
+    /* --- Ladescreen --- */
+    .loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      z-index: 100;
+    }
+
+    .loading.hidden {
+      display: none;
+    }
+
+    /* --- Scrollbar Styling --- */
+    .sidebar::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .sidebar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .sidebar::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="loading" id="loading">Kalender wird geladen...</div>
+
+<div class="app" id="app" style="display:none">
+  <div class="header">
+    <div class="header-left">
+      <div class="header-title">Arbeitskalender</div>
+      <div class="header-date" id="header-date"></div>
+    </div>
+    <div class="header-right">
+      <div class="legend" id="legend"></div>
+      <div class="clock" id="clock"></div>
+    </div>
+  </div>
+
+  <div class="allday-bar" id="allday-bar">
+    <span class="allday-label">Ganztägig</span>
+  </div>
+
+  <div class="main">
+    <div class="day-view">
+      <div class="hour-grid" id="hour-grid"></div>
+      <div class="events-layer" id="events-layer"></div>
+      <div class="time-indicator" id="time-indicator" style="display:none"></div>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-section" id="todos-due-today"></div>
+      <div class="sidebar-section" id="todos-upcoming"></div>
+      <div class="sidebar-section" id="todos-completed"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div id="footer-legend"></div>
+    <div id="footer-status">Wird geladen...</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/ical.js@1.5.0/build/ical.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/nosleep.js@0.12.0/dist/NoSleep.min.js"></script>
+<script>
+// ============================================================
+// KONFIGURATION
+// ============================================================
+const CONFIG = {
+  CALENDARS: [
+    { name: 'DJ Bookings', url: 'https://calendar.google.com/calendar/ical/hi%40stinson.media/private-7a505876fe5bd452939118e1a50c98b8/basic.ics', color: '#3b82f6' },
+    { name: 'KOMDIS', url: 'https://outlook.office365.com/owa/calendar/82d266a4a4504ed88907b470c1175738@komdis.de/871c02394b5346c48a1c1c1bb2dc17291893543045026249237/calendar.ics', color: '#7dd3fc' },
+    { name: 'HYPEUP', url: 'https://outlook.office365.com/owa/calendar/ea04e38cf89e4fa2a5a1c173087dd3b0@hypeup.de/1be183fdbeb745dab6b61e2a96e138ee16292578760773261728/calendar.ics', color: '#e879f9' },
+    { name: 'Privat', url: 'https://p152-caldav.icloud.com/published/2/MTM0MDAzMzM3MTEzNDAwMxwNOsUmawPH-FkSXm4U6edWYiZU32acENiHbBZPg3k8', color: '#9ca3af' },
+  ],
+
+  CORS_PROXY: 'https://arbeitskalender-proxy.hi-679.workers.dev/?url=',
+  ASANA_PROXY: 'https://arbeitskalender-proxy.hi-679.workers.dev/asana/',
+
+  // Asana Workspace GID — wird automatisch ermittelt wenn leer
+  ASANA_WORKSPACE_GID: '',
+
+  DAY_START_H: 9,
+  DAY_END_H: 18,
+
+  REFRESH_CALENDAR: 300000,  // 5 Minuten
+  REFRESH_ASANA: 120000,     // 2 Minuten
+};
+
+// ============================================================
+// GLOBALER STATE
+// ============================================================
+const DAY_SPAN = CONFIG.DAY_END_H - CONFIG.DAY_START_H;
+
+const DAYS_DE = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+const MONTHS_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+
+let cachedCalendarData = null;
+let cachedAsanaTasks = null;
+let asanaWorkspaceGid = CONFIG.ASANA_WORKSPACE_GID;
+let asanaTaskListGid = null;
+let currentDay = new Date();
+let noSleep = null;
+
+// ============================================================
+// HILFSFUNKTIONEN
+// ============================================================
+
+function hourToPercent(h) {
+  return Math.max(0, Math.min(100, ((h - CONFIG.DAY_START_H) / DAY_SPAN) * 100));
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDateLong(date) {
+  return DAYS_DE[date.getDay()] + ', ' + date.getDate() + '. ' + MONTHS_DE[date.getMonth()] + ' ' + date.getFullYear();
+}
+
+function formatDateShort(date) {
+  const d = date.getDate();
+  const m = date.getMonth() + 1;
+  return `${d}.${m}.`;
+}
+
+function isSameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+         a.getMonth() === b.getMonth() &&
+         a.getDate() === b.getDate();
+}
+
+function isToday(date) {
+  return isSameDay(date, new Date());
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function getDayBounds(date) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+// ============================================================
+// KALENDER: ICS LADEN & PARSEN
+// ============================================================
+
+async function fetchCalendar(cal) {
+  const url = CONFIG.CORS_PROXY + encodeURIComponent(cal.url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000); // 10s Timeout
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) throw new Error(`Fehler: "${cal.name}" (${resp.status})`);
+    const text = await resp.text();
+    return { text, cal };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseEvents(icsText, calInfo, rangeStart, rangeEnd) {
+  const events = [];
+  const jcal = ICAL.parse(icsText);
+  const comp = new ICAL.Component(jcal);
+  const vevents = comp.getAllSubcomponents('vevent');
+
+  // Erster Durchlauf: abgesagte Occurrences sammeln (UID + Zeitstempel)
+  // Outlook erstellt fuer abgesagte Serientermine einen Override-Eintrag mit
+  // RECURRENCE-ID und "Abgesagt:"-Prefix im Titel.
+  const cancelledOccurrences = new Set(); // key: "UID|ISO-Datum"
+  for (const vevent of vevents) {
+    const recurrenceId = vevent.getFirstProperty('recurrence-id');
+    if (!recurrenceId) continue;
+    const summary = vevent.getFirstPropertyValue('summary') || '';
+    const status = vevent.getFirstPropertyValue('status');
+    const isCancelled =
+      (status && status.toUpperCase() === 'CANCELLED') ||
+      summary.startsWith('Abgesagt:') ||
+      summary.startsWith('Cancelled:');
+    if (isCancelled) {
+      const uid = vevent.getFirstPropertyValue('uid');
+      const occTime = recurrenceId.getFirstValue().toJSDate().getTime();
+      cancelledOccurrences.add(`${uid}|${occTime}`);
+    }
+  }
+
+  for (const vevent of vevents) {
+    const event = new ICAL.Event(vevent);
+
+    // Abgesagte Termine überspringen (STATUS:CANCELLED oder Outlook-Prefix "Abgesagt:")
+    const status = vevent.getFirstPropertyValue('status');
+    if (status && status.toUpperCase() === 'CANCELLED') continue;
+    const summary = vevent.getFirstPropertyValue('summary') || '';
+    if (summary.startsWith('Abgesagt:') || summary.startsWith('Cancelled:')) continue;
+
+    if (event.isRecurring()) {
+      const uid = vevent.getFirstPropertyValue('uid');
+      const iter = event.iterator();
+      let next;
+      let safety = 0;
+      while ((next = iter.next()) && safety < 500) {
+        safety++;
+        const occStart = next.toJSDate();
+        if (occStart >= rangeEnd) break;
+
+        const duration = event.duration;
+        const occEnd = new Date(occStart.getTime() + duration.toSeconds() * 1000);
+        if (occEnd <= rangeStart) continue;
+
+        // Abgesagte Occurrence überspringen
+        if (cancelledOccurrences.has(`${uid}|${occStart.getTime()}`)) continue;
+
+        events.push({
+          title: event.summary || '(Kein Titel)',
+          start: occStart,
+          end: occEnd,
+          allDay: next.isDate,
+          color: calInfo.color,
+          calName: calInfo.name
+        });
+      }
+    } else {
+      const dtstart = event.startDate;
+      const dtend = event.endDate;
+      if (!dtstart) continue;
+
+      const start = dtstart.toJSDate();
+      const end = dtend ? dtend.toJSDate() : new Date(start.getTime() + 3600000);
+
+      if (start >= rangeEnd || end <= rangeStart) continue;
+
+      events.push({
+        title: event.summary || '(Kein Titel)',
+        start,
+        end,
+        allDay: dtstart.isDate,
+        color: calInfo.color,
+        calName: calInfo.name
+      });
+    }
+  }
+
+  return events;
+}
+
+async function fetchAllCalendars() {
+  if (CONFIG.CALENDARS.length === 0) {
+    cachedCalendarData = [];
+    return;
+  }
+
+  const results = await Promise.allSettled(
+    CONFIG.CALENDARS.map(cal => fetchCalendar(cal))
+  );
+
+  const calData = [];
+  const errors = [];
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      calData.push(result.value);
+    } else {
+      errors.push(result.reason.message);
+      console.error('Kalender-Fehler:', result.reason);
+    }
+  }
+
+  cachedCalendarData = calData;
+  if (errors.length > 0) {
+    console.warn('Einige Kalender konnten nicht geladen werden:', errors);
+  }
+}
+
+function getEventsForDay(date) {
+  if (window._demoEvents) return window._demoEvents;
+  if (!cachedCalendarData) return { allDay: [], timed: [] };
+
+  const { start: dayStart, end: dayEnd } = getDayBounds(date);
+  // Parse mit etwas Puffer fuer mehrtaegige Events
+  const rangeStart = new Date(dayStart);
+  rangeStart.setDate(rangeStart.getDate() - 7);
+  const rangeEnd = new Date(dayEnd);
+  rangeEnd.setDate(rangeEnd.getDate() + 7);
+
+  let allEvents = [];
+  for (const { text, cal } of cachedCalendarData) {
+    try {
+      allEvents = allEvents.concat(parseEvents(text, cal, rangeStart, rangeEnd));
+    } catch (err) {
+      console.error(`Parse-Fehler "${cal.name}":`, err);
+    }
+  }
+
+  // Auf aktuellen Tag filtern
+  const allDay = [];
+  const timed = [];
+
+  for (const ev of allEvents) {
+    if (ev.allDay) {
+      const evStart = new Date(ev.start); evStart.setHours(0,0,0,0);
+      const evEnd = new Date(ev.end); evEnd.setHours(0,0,0,0);
+      if (dayStart >= evStart && dayStart < evEnd) {
+        allDay.push(ev);
+      }
+    } else {
+      if (ev.start < dayEnd && ev.end > dayStart) {
+        timed.push(ev);
+      }
+    }
+  }
+
+  timed.sort((a, b) => a.start - b.start);
+  return { allDay, timed };
+}
+
+// ============================================================
+// ASANA: TASKS LADEN
+// ============================================================
+
+async function fetchAsanaWorkspace() {
+  if (asanaWorkspaceGid) return;
+  const resp = await fetch(CONFIG.ASANA_PROXY + 'workspaces?limit=1');
+  if (!resp.ok) throw new Error('Asana Workspace-Abfrage fehlgeschlagen');
+  const data = await resp.json();
+  if (data.data && data.data.length > 0) {
+    asanaWorkspaceGid = data.data[0].gid;
+  }
+}
+
+async function fetchAsanaTaskList() {
+  if (asanaTaskListGid) return;
+  await fetchAsanaWorkspace();
+  if (!asanaWorkspaceGid) return;
+
+  const resp = await fetch(
+    CONFIG.ASANA_PROXY + `users/me/user_task_list?workspace=${asanaWorkspaceGid}`
+  );
+  if (!resp.ok) throw new Error('Asana Task-List-Abfrage fehlgeschlagen');
+  const data = await resp.json();
+  if (data.data) {
+    asanaTaskListGid = data.data.gid;
+  }
+}
+
+async function fetchAsanaTasks() {
+  try {
+    await fetchAsanaTaskList();
+    if (!asanaTaskListGid) {
+      console.warn('Asana: Kein Task List GID gefunden');
+      return;
+    }
+
+    // Incomplete tasks
+    const incompResp = await fetch(
+      CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=name,due_on,completed,completed_at&completed_since=now&limit=100`
+    );
+
+    // Recently completed tasks (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const compResp = await fetch(
+      CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=name,due_on,completed,completed_at&completed_since=${sevenDaysAgo.toISOString()}&limit=20`
+    );
+
+    const [incompData, compData] = await Promise.all([
+      incompResp.ok ? incompResp.json() : { data: [] },
+      compResp.ok ? compResp.json() : { data: [] }
+    ]);
+
+    const incomplete = (incompData.data || []).filter(t => !t.completed);
+    const completed = (compData.data || []).filter(t => t.completed);
+
+    cachedAsanaTasks = { incomplete, completed };
+  } catch (err) {
+    console.error('Asana-Fehler:', err);
+  }
+}
+
+function localDateStr(date) {
+  return date.getFullYear() + '-' +
+    String(date.getMonth() + 1).padStart(2, '0') + '-' +
+    String(date.getDate()).padStart(2, '0');
+}
+
+function categorizeTasks() {
+  if (!cachedAsanaTasks) return { dueToday: [], upcoming: [], completed: [] };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = localDateStr(today);
+
+  const dueToday = [];
+  const upcoming = [];
+
+  for (const task of cachedAsanaTasks.incomplete) {
+    if (!task.due_on) {
+      upcoming.push(task);
+    } else if (task.due_on <= todayStr) {
+      dueToday.push(task);
+    } else {
+      upcoming.push(task);
+    }
+  }
+
+  // Sortieren: ueberfaellige zuerst, dann nach Due Date
+  dueToday.sort((a, b) => (a.due_on || '').localeCompare(b.due_on || ''));
+  upcoming.sort((a, b) => (a.due_on || 'z').localeCompare(b.due_on || 'z'));
+
+  // Completed: neueste zuerst, max 5
+  const completed = cachedAsanaTasks.completed
+    .sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || ''))
+    .slice(0, 5);
+
+  return { dueToday, upcoming, completed };
+}
+
+// ============================================================
+// RENDERING
+// ============================================================
+
+function renderHeader() {
+  document.getElementById('header-date').textContent = formatDateLong(currentDay);
+  document.getElementById('clock').textContent = formatTime(new Date());
+
+  // Legende
+  const legendEl = document.getElementById('legend');
+  legendEl.innerHTML = CONFIG.CALENDARS.map(cal =>
+    `<div class="legend-item"><span class="legend-dot" style="background:${cal.color}"></span>${escapeHtml(cal.name)}</div>`
+  ).join('');
+}
+
+function renderHourGrid() {
+  const grid = document.getElementById('hour-grid');
+  let html = '';
+
+  for (let h = CONFIG.DAY_START_H; h <= CONFIG.DAY_END_H; h++) {
+    const topPct = hourToPercent(h);
+    html += `<div class="hour-row" style="top:${topPct}%">`;
+    html += `<div class="hour-label">${String(h).padStart(2, '0')}:00</div>`;
+    html += `<div class="hour-line"></div>`;
+    html += '</div>';
+  }
+
+  grid.innerHTML = html;
+}
+
+function renderAllDay(events) {
+  const bar = document.getElementById('allday-bar');
+  let html = '<span class="allday-label">Ganztägig</span>';
+
+  if (events.length === 0) {
+    html += '<span style="opacity:0.2;font-size:0.8rem">Keine ganztägigen Termine</span>';
+  } else {
+    for (const ev of events) {
+      html += `<span class="allday-event" style="background:${ev.color}">${escapeHtml(ev.title)}</span>`;
+    }
+  }
+
+  bar.innerHTML = html;
+}
+
+function renderTimedEvents(events) {
+  const layer = document.getElementById('events-layer');
+
+  // Overlap-Gruppen bilden
+  const evs = events.map(ev => {
+    const startH = Math.max(CONFIG.DAY_START_H, ev.start.getHours() + ev.start.getMinutes() / 60);
+    const endH = Math.min(CONFIG.DAY_END_H, ev.end.getHours() + ev.end.getMinutes() / 60);
+    return { ...ev, startH, endH };
+  });
+
+  const groups = [];
+  for (const ev of evs) {
+    let placed = false;
+    for (const group of groups) {
+      if (ev.startH < group.end) {
+        group.events.push(ev);
+        group.end = Math.max(group.end, ev.endH);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      groups.push({ events: [ev], end: ev.endH });
+    }
+  }
+
+  // Spalten zuweisen
+  for (const group of groups) {
+    const columns = [];
+    for (const ev of group.events) {
+      let col = 0;
+      while (columns[col] && columns[col] > ev.startH) {
+        col++;
+      }
+      ev._col = col;
+      columns[col] = ev.endH;
+    }
+    const totalCols = columns.length;
+    for (const ev of group.events) {
+      ev._totalCols = totalCols;
+    }
+  }
+
+  let html = '';
+  for (const ev of evs) {
+    const topPct = hourToPercent(ev.startH);
+    const heightPct = Math.max(2.5, hourToPercent(ev.endH) - topPct);
+    const colWidth = 100 / ev._totalCols;
+    const leftPct = ev._col * colWidth;
+    const widthPct = colWidth - 0.5;
+    const durationMin = (ev.endH - ev.startH) * 60;
+    const isCompact = durationMin <= 30;
+
+    html += `<div class="event${isCompact ? ' compact' : ''}" style="background:${ev.color};top:${topPct}%;height:${heightPct}%;left:${leftPct}%;width:${widthPct}%">`;
+    html += `<div class="event-time">${formatTime(ev.start)} – ${formatTime(ev.end)}</div>`;
+    html += `<div class="event-title">${escapeHtml(ev.title)}</div>`;
+    if (!isCompact && ev._totalCols === 1) {
+      html += `<div class="event-cal">${escapeHtml(ev.calName)}</div>`;
+    }
+    html += '</div>';
+  }
+
+  layer.innerHTML = html;
+}
+
+function renderTimeIndicator() {
+  const indicator = document.getElementById('time-indicator');
+  const now = new Date();
+  const nowH = now.getHours() + now.getMinutes() / 60;
+
+  if (isToday(currentDay) && nowH >= CONFIG.DAY_START_H && nowH <= CONFIG.DAY_END_H) {
+    indicator.style.display = 'block';
+    indicator.style.top = hourToPercent(nowH) + '%';
+  } else {
+    indicator.style.display = 'none';
+  }
+}
+
+function renderTodos() {
+  const { dueToday, upcoming, completed } = categorizeTasks();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  function renderTask(task, isCompleted) {
+    const cls = isCompleted ? 'todo-item completed' : 'todo-item';
+    let dueHtml = '';
+
+    if (task.due_on && !isCompleted) {
+      if (task.due_on < todayStr) {
+        dueHtml = `<div class="todo-due overdue">Überfällig (${formatDueDate(task.due_on)})</div>`;
+      } else if (task.due_on === todayStr) {
+        dueHtml = `<div class="todo-due today">Heute fällig</div>`;
+      } else {
+        dueHtml = `<div class="todo-due">Fällig ${formatDueDate(task.due_on)}</div>`;
+      }
+    }
+
+    return `<div class="${cls}">
+      <div class="todo-checkbox"></div>
+      <div class="todo-content">
+        <div class="todo-name">${escapeHtml(task.name)}</div>
+        ${dueHtml}
+      </div>
+    </div>`;
+  }
+
+  // Heute fällig / Überfällig
+  const todaySection = document.getElementById('todos-due-today');
+  if (dueToday.length > 0) {
+    todaySection.innerHTML =
+      '<div class="sidebar-heading"><span class="sidebar-heading-icon">!</span> Heute & Überfällig</div>' +
+      dueToday.map(t => renderTask(t, false)).join('');
+  } else {
+    todaySection.innerHTML =
+      '<div class="sidebar-heading"><span class="sidebar-heading-icon">!</span> Heute fällig</div>' +
+      '<div class="todo-empty">Keine Aufgaben für heute</div>';
+  }
+
+  // Demnächst
+  const upSection = document.getElementById('todos-upcoming');
+  if (upcoming.length > 0) {
+    upSection.innerHTML =
+      '<div class="sidebar-heading"><span class="sidebar-heading-icon">&rarr;</span> Demnächst</div>' +
+      upcoming.slice(0, 15).map(t => renderTask(t, false)).join('');
+  } else {
+    upSection.innerHTML = '';
+  }
+
+  // Kürzlich erledigt
+  const compSection = document.getElementById('todos-completed');
+  if (completed.length > 0) {
+    compSection.innerHTML =
+      '<div class="sidebar-heading"><span class="sidebar-heading-icon">&check;</span> Kürzlich erledigt</div>' +
+      completed.map(t => renderTask(t, true)).join('');
+  } else {
+    compSection.innerHTML = '';
+  }
+}
+
+function formatDueDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return `${d}.${m}.`;
+}
+
+function renderFooter() {
+  const legendParts = CONFIG.CALENDARS.map(cal =>
+    `<span style="color:${cal.color}">●</span> ${escapeHtml(cal.name)}`
+  );
+  document.getElementById('footer-legend').innerHTML = legendParts.join(' &nbsp; ');
+  document.getElementById('footer-status').textContent = 'Aktualisiert ' + formatTime(new Date());
+}
+
+function renderAll() {
+  const { allDay, timed } = getEventsForDay(currentDay);
+
+  renderHeader();
+  renderHourGrid();
+  renderAllDay(allDay);
+  renderTimedEvents(timed);
+  renderTimeIndicator();
+  renderTodos();
+  renderFooter();
+}
+
+// ============================================================
+// INITIALISIERUNG & AUTO-REFRESH
+// ============================================================
+
+function loadDemoData() {
+  const now = new Date();
+  const today = new Date(now);
+
+  function makeTime(h, m) {
+    const d = new Date(today);
+    d.setHours(h, m, 0, 0);
+    return d;
+  }
+
+  // Demo-Kalender-Events
+  cachedCalendarData = [{ text: '', cal: { name: 'Demo', color: '#666' } }];
+
+  // Direkt Events injizieren statt ICS zu parsen
+  const demoEvents = [
+    { title: 'Daily Standup', start: makeTime(9, 30), end: makeTime(9, 45), allDay: false, color: '#0078d4', calName: 'Outlook' },
+    { title: 'Sprint Planning', start: makeTime(10, 0), end: makeTime(11, 30), allDay: false, color: '#0078d4', calName: 'Outlook' },
+    { title: 'Mittagspause', start: makeTime(12, 0), end: makeTime(13, 0), allDay: false, color: '#34a853', calName: 'Google' },
+    { title: 'Design Review', start: makeTime(13, 30), end: makeTime(14, 30), allDay: false, color: '#1e3a5f', calName: 'iCloud' },
+    { title: 'Fokuszeit', start: makeTime(14, 0), end: makeTime(16, 0), allDay: false, color: '#34a853', calName: 'Google' },
+    { title: '1:1 mit Sarah', start: makeTime(16, 30), end: makeTime(17, 0), allDay: false, color: '#0078d4', calName: 'Outlook' },
+  ];
+  const demoAllDay = [
+    { title: 'Sprint Review', start: today, end: new Date(today.getTime() + 86400000), allDay: true, color: '#0078d4', calName: 'Outlook' },
+    { title: 'Team Offsite', start: today, end: new Date(today.getTime() + 86400000), allDay: true, color: '#34a853', calName: 'Google' },
+  ];
+
+  // Override getEventsForDay fuer Demo
+  window._demoEvents = { allDay: demoAllDay, timed: demoEvents };
+
+  // Demo Asana Tasks
+  const todayStr = localDateStr(now);
+  const yesterdayStr = localDateStr(new Date(now.getTime() - 86400000));
+  const tomorrowStr = localDateStr(new Date(now.getTime() + 86400000));
+  const nextWeekStr = localDateStr(new Date(now.getTime() + 5 * 86400000));
+
+  cachedAsanaTasks = {
+    incomplete: [
+      { name: 'PR #423 reviewen', due_on: todayStr, completed: false },
+      { name: 'API Docs aktualisieren', due_on: todayStr, completed: false },
+      { name: 'Bug #1892 untersuchen', due_on: yesterdayStr, completed: false },
+      { name: 'Sprint Retro vorbereiten', due_on: tomorrowStr, completed: false },
+      { name: 'Deployment Plan erstellen', due_on: nextWeekStr, completed: false },
+      { name: 'Monitoring Dashboard einrichten', due_on: nextWeekStr, completed: false },
+      { name: 'Design Tokens abstimmen', due_on: null, completed: false },
+    ],
+    completed: [
+      { name: 'CI Pipeline fixen', due_on: todayStr, completed: true, completed_at: now.toISOString() },
+      { name: 'Onboarding-Guide updaten', due_on: yesterdayStr, completed: true, completed_at: yesterdayStr + 'T17:00:00Z' },
+      { name: 'Performance Audit', due_on: yesterdayStr, completed: true, completed_at: yesterdayStr + 'T14:00:00Z' },
+    ]
+  };
+
+  // Demo Kalender-Config fuer Legende
+  CONFIG.CALENDARS = [
+    { name: 'Outlook', url: '', color: '#0078d4' },
+    { name: 'iCloud', url: '', color: '#1e3a5f' },
+    { name: 'Google', url: '', color: '#34a853' },
+  ];
+}
+
+const DEMO_MODE = CONFIG.CALENDARS.length === 0;
+
+async function init() {
+  currentDay = new Date();
+
+  if (DEMO_MODE) {
+    loadDemoData();
+  } else {
+    // Daten parallel laden
+    const calendarPromise = fetchAllCalendars();
+    const asanaPromise = fetchAsanaTasks().catch(err => {
+      console.warn('Asana nicht verfügbar:', err.message);
+    });
+    await Promise.all([calendarPromise, asanaPromise]);
+  }
+
+  renderAll();
+
+  document.getElementById('loading').classList.add('hidden');
+  document.getElementById('app').style.display = 'grid';
+
+  // NoSleep fuer iPad
+  try {
+    noSleep = new NoSleep();
+    document.addEventListener('click', function enableNoSleep() {
+      noSleep.enable();
+      document.removeEventListener('click', enableNoSleep);
+    }, { once: true });
+    document.addEventListener('touchstart', function enableNoSleep() {
+      noSleep.enable();
+      document.removeEventListener('touchstart', enableNoSleep);
+    }, { once: true });
+  } catch (e) {
+    console.warn('NoSleep nicht verfügbar:', e);
+  }
+}
+
+// Uhr & Zeitindikator jede Minute aktualisieren
+setInterval(() => {
+  const clockEl = document.getElementById('clock');
+  if (clockEl) clockEl.textContent = formatTime(new Date());
+  renderTimeIndicator();
+}, 60000);
+
+// Kalender alle 5 Minuten neu laden
+setInterval(async () => {
+  await fetchAllCalendars();
+  const { allDay, timed } = getEventsForDay(currentDay);
+  renderAllDay(allDay);
+  renderTimedEvents(timed);
+  renderTimeIndicator();
+  renderFooter();
+}, CONFIG.REFRESH_CALENDAR);
+
+// Asana alle 2 Minuten neu laden
+setInterval(async () => {
+  await fetchAsanaTasks();
+  renderTodos();
+  renderFooter();
+}, CONFIG.REFRESH_ASANA);
+
+// Tageswechsel: um Mitternacht alles neu laden
+setInterval(() => {
+  const now = new Date();
+  if (!isSameDay(now, currentDay)) {
+    currentDay = now;
+    fetchAllCalendars().then(() => renderAll());
+    fetchAsanaTasks().then(() => renderTodos());
+  }
+}, 60000);
+
+init();
+</script>
+</body>
+</html>

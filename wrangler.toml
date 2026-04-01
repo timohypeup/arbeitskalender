@@ -1,0 +1,4 @@
+name = "arbeitskalender-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+account_id = "a679a5f192e31042148d5731631291d9"
