@@ -120,10 +120,10 @@
       color: #fff;
     }
 
-    /* --- Main Content: Kalender + Sidebar --- */
+    /* --- Main Content: Kalender + Todos + Inbox --- */
     .main {
       display: grid;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr 290px 290px;
       min-height: 0;
       overflow: hidden;
     }
@@ -342,6 +342,96 @@
       text-align: center;
     }
 
+    /* --- Inbox (rechte Seite: Asana Notifications) --- */
+    .inbox {
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 0.8rem;
+      gap: 0.5rem;
+      background: #0d0d14;
+      border-left: 1px solid #1a1a2e;
+    }
+
+    .inbox-heading {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.5;
+      padding: 0.2rem 0 0.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .inbox-item {
+      padding: 0.5rem 0.6rem;
+      border-radius: 6px;
+      background: #141420;
+      border: 1px solid #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .inbox-item.unread {
+      border-color: #2a2a4a;
+      background: #16162a;
+    }
+
+    .inbox-item.unread::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background: #e94560;
+      border-radius: 50%;
+      position: absolute;
+      margin-left: -0.4rem;
+    }
+
+    .inbox-resource {
+      font-size: 0.75rem;
+      font-weight: 600;
+      opacity: 0.6;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .inbox-text {
+      font-size: 0.82rem;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .inbox-time {
+      font-size: 0.68rem;
+      opacity: 0.35;
+      margin-top: 0.1rem;
+    }
+
+    .inbox-empty {
+      font-size: 0.85rem;
+      opacity: 0.3;
+      padding: 0.5rem;
+      text-align: center;
+    }
+
+    .inbox::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .inbox::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .inbox::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 2px;
+    }
+
     /* --- Footer --- */
     .footer {
       display: flex;
@@ -417,6 +507,11 @@
       <div class="sidebar-section" id="todos-upcoming"></div>
       <div class="sidebar-section" id="todos-completed"></div>
     </div>
+
+    <div class="inbox" id="inbox">
+      <div class="inbox-heading">&#9993; Asana Inbox</div>
+      <div id="inbox-items"><div class="inbox-empty">Wird geladen...</div></div>
+    </div>
   </div>
 
   <div class="footer">
@@ -464,6 +559,7 @@ let cachedCalendarData = null;
 let cachedAsanaTasks = null;
 let asanaWorkspaceGid = CONFIG.ASANA_WORKSPACE_GID;
 let asanaTaskListGid = null;
+let cachedAsanaInbox = null;
 let currentDay = new Date();
 let noSleep = null;
 
@@ -749,6 +845,55 @@ async function fetchAsanaTasks() {
   }
 }
 
+async function fetchAsanaInbox() {
+  try {
+    await fetchAsanaWorkspace();
+    if (!asanaWorkspaceGid) return;
+
+    const resp = await fetch(
+      CONFIG.ASANA_PROXY + `workspaces/${asanaWorkspaceGid}/notifications?opt_fields=created_at,text,resource,resource.name,type,read_at&limit=30`
+    );
+    if (!resp.ok) throw new Error('Inbox-Abfrage fehlgeschlagen');
+    const data = await resp.json();
+    cachedAsanaInbox = data.data || [];
+  } catch (err) {
+    console.error('Asana-Inbox-Fehler:', err);
+  }
+}
+
+function renderInbox() {
+  const container = document.getElementById('inbox-items');
+  if (!container) return;
+
+  if (!cachedAsanaInbox || cachedAsanaInbox.length === 0) {
+    container.innerHTML = '<div class="inbox-empty">Keine Benachrichtigungen</div>';
+    return;
+  }
+
+  const now = new Date();
+  container.innerHTML = cachedAsanaInbox.map(n => {
+    const isUnread = !n.read_at;
+    const resourceName = n.resource?.name || '';
+    const text = n.text || '';
+    const age = formatInboxAge(new Date(n.created_at), now);
+
+    return `<div class="inbox-item${isUnread ? ' unread' : ''}">
+      ${resourceName ? `<div class="inbox-resource">${escapeHtml(resourceName)}</div>` : ''}
+      <div class="inbox-text">${escapeHtml(text)}</div>
+      <div class="inbox-time">${age}</div>
+    </div>`;
+  }).join('');
+}
+
+function formatInboxAge(date, now) {
+  const diff = Math.floor((now - date) / 1000);
+  if (diff < 60) return 'Gerade eben';
+  if (diff < 3600) return `vor ${Math.floor(diff / 60)} Min`;
+  if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Std`;
+  if (diff < 604800) return `vor ${Math.floor(diff / 86400)} Tagen`;
+  return date.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+}
+
 function localDateStr(date) {
   return date.getFullYear() + '-' +
     String(date.getMonth() + 1).padStart(2, '0') + '-' +
@@ -992,6 +1137,7 @@ function renderAll() {
   renderTimedEvents(timed);
   renderTimeIndicator();
   renderTodos();
+  renderInbox();
   renderFooter();
 }
 
@@ -1073,7 +1219,10 @@ async function init() {
     const asanaPromise = fetchAsanaTasks().catch(err => {
       console.warn('Asana nicht verfügbar:', err.message);
     });
-    await Promise.all([calendarPromise, asanaPromise]);
+    const inboxPromise = fetchAsanaInbox().catch(err => {
+      console.warn('Asana Inbox nicht verfügbar:', err.message);
+    });
+    await Promise.all([calendarPromise, asanaPromise, inboxPromise]);
   }
 
   renderAll();
@@ -1119,6 +1268,12 @@ setInterval(async () => {
   await fetchAsanaTasks();
   renderTodos();
   renderFooter();
+}, CONFIG.REFRESH_ASANA);
+
+// Asana Inbox alle 2 Minuten neu laden
+setInterval(async () => {
+  await fetchAsanaInbox();
+  renderInbox();
 }, CONFIG.REFRESH_ASANA);
 
 // Tageswechsel: um Mitternacht alles neu laden
