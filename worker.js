@@ -11,7 +11,7 @@ export default {
       return new Response(null, {
         headers: {
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type',
           'Access-Control-Max-Age': '86400'
         }
@@ -20,7 +20,7 @@ export default {
 
     // --- Asana API Proxy: /asana/... ---
     if (url.pathname.startsWith('/asana/')) {
-      return handleAsana(url, env);
+      return handleAsana(url, request, env);
     }
 
     // --- Kalender CORS Proxy: /?url=... ---
@@ -28,7 +28,7 @@ export default {
   }
 };
 
-async function handleAsana(url, env) {
+async function handleAsana(url, request, env) {
   const pat = env.ASANA_PAT;
   if (!pat) {
     return jsonResponse({ error: 'ASANA_PAT secret not configured' }, 500);
@@ -38,23 +38,34 @@ async function handleAsana(url, env) {
   const asanaPath = url.pathname.replace(/^\/asana/, '');
   const asanaUrl = `https://app.asana.com/api/1.0${asanaPath}${url.search}`;
 
+  const isWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
+
   try {
-    const resp = await fetch(asanaUrl, {
+    const fetchOptions = {
+      method: request.method,
       headers: {
         'Authorization': `Bearer ${pat}`,
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        ...(isWrite ? { 'Content-Type': 'application/json' } : {})
       }
-    });
+    };
 
+    // Body fuer schreibende Requests weiterleiten
+    if (isWrite) {
+      fetchOptions.body = await request.text();
+    }
+
+    const resp = await fetch(asanaUrl, fetchOptions);
     const body = await resp.text();
 
     return new Response(body, {
       status: resp.status,
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'public, max-age=120'
+        // Kein Cache fuer schreibende Requests
+        'Cache-Control': isWrite ? 'no-store' : 'public, max-age=120'
       }
     });
   } catch (err) {

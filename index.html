@@ -290,18 +290,32 @@
       opacity: 0.4;
     }
 
+    .todo-item.clickable:hover,
+    .inbox-item.clickable:hover {
+      border-color: #2a2a4a;
+      background: #181828;
+    }
+
     .todo-checkbox {
       width: 16px;
       height: 16px;
       border-radius: 50%;
       border: 2px solid #444;
       flex-shrink: 0;
-      margin-top: 1px;
+      margin-top: 2px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .todo-checkbox:hover {
+      border-color: #4ade80;
+      background: rgba(74, 222, 128, 0.1);
     }
 
     .todo-item.completed .todo-checkbox {
       background: #4ade80;
       border-color: #4ade80;
+      cursor: default;
     }
 
     .todo-content {
@@ -406,10 +420,41 @@
       word-break: break-word;
     }
 
+    .inbox-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin-top: 0.15rem;
+    }
+
     .inbox-time {
       font-size: 0.68rem;
       opacity: 0.35;
-      margin-top: 0.1rem;
+    }
+
+    .inbox-project {
+      font-size: 0.68rem;
+      opacity: 0.45;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 120px;
+    }
+
+    .inbox-due {
+      font-size: 0.68rem;
+      opacity: 0.5;
+    }
+
+    .inbox-due.overdue {
+      color: #ef4444;
+      opacity: 0.9;
+    }
+
+    .inbox-due.today {
+      color: #f59e0b;
+      opacity: 0.9;
     }
 
     .inbox-empty {
@@ -819,16 +864,16 @@ async function fetchAsanaTasks() {
       return;
     }
 
-    // Incomplete tasks
+    // Incomplete tasks (mit GID fuer Abhak-Funktion)
     const incompResp = await fetch(
-      CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=name,due_on,completed,completed_at&completed_since=now&limit=100`
+      CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=gid,name,due_on,completed,completed_at&completed_since=now&limit=100`
     );
 
     // Recently completed tasks (last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const compResp = await fetch(
-      CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=name,due_on,completed,completed_at&completed_since=${sevenDaysAgo.toISOString()}&limit=20`
+      CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=gid,name,due_on,completed,completed_at&completed_since=${sevenDaysAgo.toISOString()}&limit=20`
     );
 
     const [incompData, compData] = await Promise.all([
@@ -850,14 +895,59 @@ async function fetchAsanaInbox() {
     await fetchAsanaWorkspace();
     if (!asanaWorkspaceGid) return;
 
+    // Inbox = alle offenen Tasks mit assignee_status "inbox"
+    // Das entspricht genau der Asana-Inbox-Ansicht
     const resp = await fetch(
-      CONFIG.ASANA_PROXY + `workspaces/${asanaWorkspaceGid}/notifications?opt_fields=created_at,text,resource,resource.name,type,read_at&limit=30`
+      CONFIG.ASANA_PROXY + `tasks?assignee=me&workspace=${asanaWorkspaceGid}&opt_fields=gid,name,modified_at,created_at,assignee_status,due_on,memberships.project.name&completed_since=now&limit=50`
     );
     if (!resp.ok) throw new Error('Inbox-Abfrage fehlgeschlagen');
     const data = await resp.json();
-    cachedAsanaInbox = data.data || [];
+
+    // Nur Tasks mit Status "inbox" (= noch nicht in My Tasks einsortiert)
+    const inboxTasks = (data.data || []).filter(t => t.assignee_status === 'inbox');
+
+    // Sortieren: neueste zuerst (nach modified_at)
+    inboxTasks.sort((a, b) => (b.modified_at || '').localeCompare(a.modified_at || ''));
+
+    cachedAsanaInbox = inboxTasks;
   } catch (err) {
     console.error('Asana-Inbox-Fehler:', err);
+  }
+}
+
+// Task als erledigt markieren (optimistisches UI-Update)
+async function completeAsanaTask(gid, sourceEl) {
+  // Optimistisch: Element sofort ausblenden
+  if (sourceEl) {
+    sourceEl.style.opacity = '0.3';
+    sourceEl.style.pointerEvents = 'none';
+  }
+
+  try {
+    const resp = await fetch(CONFIG.ASANA_PROXY + `tasks/${gid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { completed: true } })
+    });
+
+    if (!resp.ok) throw new Error('PATCH fehlgeschlagen');
+
+    // Aus Cache entfernen und neu rendern
+    if (cachedAsanaTasks) {
+      cachedAsanaTasks.incomplete = cachedAsanaTasks.incomplete.filter(t => t.gid !== gid);
+    }
+    if (cachedAsanaInbox) {
+      cachedAsanaInbox = cachedAsanaInbox.filter(t => t.gid !== gid);
+    }
+    renderTodos();
+    renderInbox();
+  } catch (err) {
+    console.error('Abhaken fehlgeschlagen:', err);
+    // Rückgängig machen bei Fehler
+    if (sourceEl) {
+      sourceEl.style.opacity = '';
+      sourceEl.style.pointerEvents = '';
+    }
   }
 }
 
@@ -866,21 +956,38 @@ function renderInbox() {
   if (!container) return;
 
   if (!cachedAsanaInbox || cachedAsanaInbox.length === 0) {
-    container.innerHTML = '<div class="inbox-empty">Keine Benachrichtigungen</div>';
+    container.innerHTML = '<div class="inbox-empty">Inbox ist leer</div>';
     return;
   }
 
   const now = new Date();
-  container.innerHTML = cachedAsanaInbox.map(n => {
-    const isUnread = !n.read_at;
-    const resourceName = n.resource?.name || '';
-    const text = n.text || '';
-    const age = formatInboxAge(new Date(n.created_at), now);
+  const todayStr = localDateStr(now);
 
-    return `<div class="inbox-item${isUnread ? ' unread' : ''}">
-      ${resourceName ? `<div class="inbox-resource">${escapeHtml(resourceName)}</div>` : ''}
-      <div class="inbox-text">${escapeHtml(text)}</div>
-      <div class="inbox-time">${age}</div>
+  container.innerHTML = cachedAsanaInbox.map(task => {
+    const project = task.memberships?.[0]?.project?.name || '';
+    const age = formatInboxAge(new Date(task.modified_at || task.created_at), now);
+    let dueHtml = '';
+    if (task.due_on) {
+      if (task.due_on < todayStr) {
+        dueHtml = `<span class="inbox-due overdue">Überfällig</span>`;
+      } else if (task.due_on === todayStr) {
+        dueHtml = `<span class="inbox-due today">Heute</span>`;
+      } else {
+        const [,m,d] = task.due_on.split('-').map(Number);
+        dueHtml = `<span class="inbox-due">${d}.${m}.</span>`;
+      }
+    }
+
+    return `<div class="inbox-item clickable">
+      <div class="todo-checkbox" onclick="completeAsanaTask('${task.gid}', this.closest('.inbox-item'))"></div>
+      <div class="todo-content">
+        <div class="todo-name">${escapeHtml(task.name)}</div>
+        <div class="inbox-meta">
+          ${project ? `<span class="inbox-project">${escapeHtml(project)}</span>` : ''}
+          ${dueHtml}
+          <span class="inbox-time">${age}</span>
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1060,7 +1167,7 @@ function renderTodos() {
   const todayStr = new Date().toISOString().slice(0, 10);
 
   function renderTask(task, isCompleted) {
-    const cls = isCompleted ? 'todo-item completed' : 'todo-item';
+    const cls = isCompleted ? 'todo-item completed' : 'todo-item clickable';
     let dueHtml = '';
 
     if (task.due_on && !isCompleted) {
@@ -1073,8 +1180,9 @@ function renderTodos() {
       }
     }
 
+    const checkClick = isCompleted ? '' : `onclick="completeAsanaTask('${task.gid}', this)"`;
     return `<div class="${cls}">
-      <div class="todo-checkbox"></div>
+      <div class="todo-checkbox" ${checkClick}></div>
       <div class="todo-content">
         <div class="todo-name">${escapeHtml(task.name)}</div>
         ${dueHtml}
