@@ -712,7 +712,7 @@ async function fetchCalendar(cal) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000); // 10s Timeout
   try {
-    const resp = await fetch(url, { signal: controller.signal });
+    const resp = await bustingFetch(url, { signal: controller.signal });
     if (!resp.ok) throw new Error(`Fehler: "${cal.name}" (${resp.status})`);
     const text = await resp.text();
     return { text, cal };
@@ -882,7 +882,7 @@ function getEventsForDay(date) {
 
 async function fetchAsanaWorkspace() {
   if (asanaWorkspaceGid) return;
-  const resp = await fetch(CONFIG.ASANA_PROXY + 'workspaces?limit=1');
+  const resp = await bustingFetch(CONFIG.ASANA_PROXY + 'workspaces?limit=1');
   if (!resp.ok) throw new Error('Asana Workspace-Abfrage fehlgeschlagen');
   const data = await resp.json();
   if (data.data && data.data.length > 0) {
@@ -895,7 +895,7 @@ async function fetchAsanaTaskList() {
   await fetchAsanaWorkspace();
   if (!asanaWorkspaceGid) return;
 
-  const resp = await fetch(
+  const resp = await bustingFetch(
     CONFIG.ASANA_PROXY + `users/me/user_task_list?workspace=${asanaWorkspaceGid}`
   );
   if (!resp.ok) throw new Error('Asana Task-List-Abfrage fehlgeschlagen');
@@ -914,14 +914,14 @@ async function fetchAsanaTasks() {
     }
 
     // Incomplete tasks (mit GID fuer Abhak-Funktion)
-    const incompResp = await fetch(
+    const incompResp = await bustingFetch(
       CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=gid,name,due_on,completed,completed_at&completed_since=now&limit=100`
     );
 
     // Recently completed tasks (last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const compResp = await fetch(
+    const compResp = await bustingFetch(
       CONFIG.ASANA_PROXY + `user_task_lists/${asanaTaskListGid}/tasks?opt_fields=gid,name,due_on,completed,completed_at&completed_since=${sevenDaysAgo.toISOString()}&limit=20`
     );
 
@@ -945,7 +945,7 @@ let asanaUserGid = null;
 async function fetchAsanaUser() {
   if (asanaUserGid) return;
   try {
-    const r = await fetch(CONFIG.ASANA_PROXY + 'users/me?opt_fields=gid');
+    const r = await bustingFetch(CONFIG.ASANA_PROXY + 'users/me?opt_fields=gid');
     if (!r.ok) return;
     const d = await r.json();
     asanaUserGid = d.data?.gid;
@@ -965,7 +965,7 @@ async function fetchAsanaInbox() {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const sinceISO = thirtyDaysAgo.toISOString();
 
-    const resp = await fetch(
+    const resp = await bustingFetch(
       CONFIG.ASANA_PROXY + `workspaces/${asanaWorkspaceGid}/tasks/search?followers.any=${asanaUserGid}&modified_at.after=${sinceISO}&opt_fields=gid,name,memberships.project.name,permalink_url&limit=50`
     );
     if (!resp.ok) throw new Error('Inbox-Search fehlgeschlagen');
@@ -975,7 +975,7 @@ async function fetchAsanaInbox() {
     // Parallel: pro Task Kommentar-Stories laden und nach Mentions filtern
     await Promise.all(tasks.map(async task => {
       try {
-        const r = await fetch(
+        const r = await bustingFetch(
           CONFIG.ASANA_PROXY + `tasks/${task.gid}/stories?opt_fields=created_at,created_by.gid,created_by.name,text,type,resource_subtype&limit=100`
         );
         if (!r.ok) return;
@@ -1029,7 +1029,7 @@ async function completeAsanaTask(gid, sourceEl) {
   }
 
   try {
-    const resp = await fetch(CONFIG.ASANA_PROXY + `tasks/${gid}`, {
+    const resp = await bustingFetch(CONFIG.ASANA_PROXY + `tasks/${gid}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: { completed: true } })
@@ -1430,10 +1430,30 @@ function loadDemoData() {
 
 const DEMO_MODE = CONFIG.CALENDARS.length === 0;
 
-// Manueller Reload via Button im Header
+// Force-Refresh Flag: wenn true, werden alle fetch()-Calls
+// mit Cache-Busting-Parameter aufgerufen, um Browser- und CDN-Cache zu umgehen
+let forceRefresh = false;
+
+// Wrapper um fetch: bei aktivem forceRefresh hängt es einen Timestamp an die URL
+// und setzt cache: 'no-store' um Browser-Cache zu umgehen
+function bustingFetch(url, options = {}) {
+  if (forceRefresh) {
+    const sep = url.includes('?') ? '&' : '?';
+    url = url + sep + '_=' + Date.now();
+    options = { ...options, cache: 'no-store' };
+  }
+  return fetch(url, options);
+}
+
+// Manueller Reload via Button im Header — umgeht Caches komplett
 async function reloadAll() {
   const btn = document.getElementById('reload-btn');
   if (btn) btn.classList.add('spinning');
+  forceRefresh = true;
+  // Asana-GIDs invalidieren, damit users/me und workspaces frisch geholt werden
+  asanaWorkspaceGid = '';
+  asanaTaskListGid = null;
+  asanaUserGid = null;
   try {
     if (!DEMO_MODE) {
       await Promise.all([
@@ -1445,6 +1465,7 @@ async function reloadAll() {
     currentDay = new Date();
     renderAll();
   } finally {
+    forceRefresh = false;
     if (btn) btn.classList.remove('spinning');
   }
 }
