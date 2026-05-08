@@ -60,6 +60,39 @@
       opacity: 0.6;
     }
 
+    .reload-btn {
+      background: transparent;
+      border: 1px solid #2a2a3e;
+      color: #e0e0e0;
+      width: 1.8rem;
+      height: 1.8rem;
+      border-radius: 50%;
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      opacity: 0.5;
+      transition: opacity 0.15s, transform 0.15s, border-color 0.15s;
+    }
+
+    .reload-btn:hover {
+      opacity: 1;
+      border-color: #4a4a6e;
+    }
+
+    .reload-btn.spinning {
+      animation: spin 0.8s linear infinite;
+      opacity: 1;
+      pointer-events: none;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
     .header-right {
       display: flex;
       align-items: center;
@@ -544,6 +577,7 @@
     <div class="header-left">
       <div class="header-title">Arbeitskalender</div>
       <div class="header-date" id="header-date"></div>
+      <button class="reload-btn" id="reload-btn" title="Daten neu laden" onclick="reloadAll()">↻</button>
     </div>
     <div class="header-right">
       <div class="legend" id="legend"></div>
@@ -905,38 +939,66 @@ async function fetchAsanaTasks() {
   }
 }
 
+// Eigene User-GID cachen, um eigene Aktionen aus der Inbox zu filtern
+let asanaUserGid = null;
+
+async function fetchAsanaUser() {
+  if (asanaUserGid) return;
+  try {
+    const r = await fetch(CONFIG.ASANA_PROXY + 'users/me?opt_fields=gid');
+    if (!r.ok) return;
+    const d = await r.json();
+    asanaUserGid = d.data?.gid;
+  } catch {}
+}
+
 async function fetchAsanaInbox() {
   try {
     await fetchAsanaWorkspace();
+    await fetchAsanaUser();
     if (!asanaWorkspaceGid) return;
 
-    // Inbox = alle offenen Tasks mit assignee_status "inbox"
+    // Asana hat keinen oeffentlichen Inbox-Endpoint. Workaround:
+    // Tasks die mir zugewiesen sind UND in den letzten 7 Tagen geaendert wurden
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sinceISO = sevenDaysAgo.toISOString();
+
     const resp = await fetch(
-      CONFIG.ASANA_PROXY + `tasks?assignee=me&workspace=${asanaWorkspaceGid}&opt_fields=gid,name,modified_at,created_at,assignee_status,due_on,memberships.project.name&completed_since=now&limit=50`
+      CONFIG.ASANA_PROXY + `tasks?assignee=me&workspace=${asanaWorkspaceGid}&opt_fields=gid,name,modified_at,memberships.project.name&modified_since=${sinceISO}&completed_since=now&limit=50`
     );
     if (!resp.ok) throw new Error('Inbox-Abfrage fehlgeschlagen');
     const data = await resp.json();
+    const tasks = data.data || [];
 
-    const inboxTasks = (data.data || []).filter(t => t.assignee_status === 'inbox');
-    inboxTasks.sort((a, b) => (b.modified_at || '').localeCompare(a.modified_at || ''));
-
-    // Parallel: letzte Story (= letzte Aenderung) fuer jeden Task laden
-    await Promise.all(inboxTasks.map(async task => {
+    // Parallel: Stories pro Task laden, eigene Aktionen rausfiltern
+    await Promise.all(tasks.map(async task => {
       try {
         const r = await fetch(
-          CONFIG.ASANA_PROXY + `tasks/${task.gid}/stories?opt_fields=created_at,created_by.name,text,type,resource_subtype&limit=100`
+          CONFIG.ASANA_PROXY + `tasks/${task.gid}/stories?opt_fields=created_at,created_by.gid,created_by.name,text,type,resource_subtype&limit=100`
         );
         if (!r.ok) return;
         const sd = await r.json();
         const stories = sd.data || [];
-        // Asana liefert chronologisch (alt -> neu). Letzter Eintrag = aktuellste Aenderung
-        if (stories.length > 0) {
-          task.lastStory = stories[stories.length - 1];
+
+        // Nur Aktionen von ANDEREN (nicht von mir) und in letzten 7 Tagen
+        const relevant = stories.filter(s =>
+          s.created_by?.gid && s.created_by.gid !== asanaUserGid &&
+          s.created_at >= sinceISO
+        );
+
+        if (relevant.length > 0) {
+          task.lastStory = relevant[relevant.length - 1]; // neueste = letzte
         }
-      } catch (e) { /* Fail silent für einzelne Stories */ }
+      } catch (e) {}
     }));
 
-    cachedAsanaInbox = inboxTasks;
+    // Nur Tasks behalten, bei denen es echte fremde Aktivitaet gab
+    const inbox = tasks.filter(t => t.lastStory);
+    // Sortieren nach Story-Zeitstempel desc
+    inbox.sort((a, b) => (b.lastStory.created_at || '').localeCompare(a.lastStory.created_at || ''));
+
+    cachedAsanaInbox = inbox;
   } catch (err) {
     console.error('Asana-Inbox-Fehler:', err);
   }
@@ -1361,6 +1423,25 @@ function loadDemoData() {
 }
 
 const DEMO_MODE = CONFIG.CALENDARS.length === 0;
+
+// Manueller Reload via Button im Header
+async function reloadAll() {
+  const btn = document.getElementById('reload-btn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    if (!DEMO_MODE) {
+      await Promise.all([
+        fetchAllCalendars(),
+        fetchAsanaTasks().catch(() => {}),
+        fetchAsanaInbox().catch(() => {})
+      ]);
+    }
+    currentDay = new Date();
+    renderAll();
+  } finally {
+    if (btn) btn.classList.remove('spinning');
+  }
+}
 
 async function init() {
   currentDay = new Date();
