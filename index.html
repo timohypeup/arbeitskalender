@@ -479,6 +479,10 @@
       line-height: 1.25;
       margin-bottom: 0.25rem;
       word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
 
     .inbox-activity {
@@ -1115,16 +1119,13 @@ function renderInbox() {
       }
     }
 
-    return `<div class="inbox-item clickable">
-      <div class="todo-checkbox" onclick="event.stopPropagation();completeAsanaTask('${task.gid}', this.closest('.inbox-item'))"></div>
-      <div class="todo-content">
-        <div class="inbox-context">
-          ${project ? `<span class="inbox-project">${escapeHtml(project)}</span>` : ''}
-          <span class="inbox-time">${age}</span>
-        </div>
-        <div class="inbox-task-name">${escapeHtml(task.name)}</div>
-        ${activityHtml}
+    return `<div class="inbox-item">
+      <div class="inbox-context">
+        ${project ? `<span class="inbox-project">${escapeHtml(project)}</span>` : ''}
+        <span class="inbox-time">${age}</span>
       </div>
+      <div class="inbox-task-name">${escapeHtml(task.name)}</div>
+      ${activityHtml}
     </div>`;
   }).join('');
 }
