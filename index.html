@@ -414,47 +414,62 @@
       text-overflow: ellipsis;
     }
 
-    .inbox-text {
-      font-size: 0.82rem;
-      line-height: 1.3;
-      word-break: break-word;
-    }
-
-    .inbox-meta {
+    .inbox-context {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
-      flex-wrap: wrap;
-      margin-top: 0.15rem;
-    }
-
-    .inbox-time {
-      font-size: 0.68rem;
-      opacity: 0.35;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.15rem;
     }
 
     .inbox-project {
-      font-size: 0.68rem;
-      opacity: 0.45;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      opacity: 0.55;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 120px;
     }
 
-    .inbox-due {
-      font-size: 0.68rem;
-      opacity: 0.5;
+    .inbox-time {
+      font-size: 0.65rem;
+      opacity: 0.35;
+      flex-shrink: 0;
     }
 
-    .inbox-due.overdue {
-      color: #ef4444;
-      opacity: 0.9;
+    .inbox-task-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      opacity: 0.75;
+      line-height: 1.25;
+      margin-bottom: 0.25rem;
+      word-break: break-word;
     }
 
-    .inbox-due.today {
-      color: #f59e0b;
-      opacity: 0.9;
+    .inbox-activity {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.7rem;
+      opacity: 0.55;
+      margin-bottom: 0.1rem;
+    }
+
+    .inbox-author {
+      font-weight: 600;
+      opacity: 1;
+    }
+
+    .inbox-action {
+      opacity: 0.7;
+    }
+
+    .inbox-text {
+      font-size: 0.82rem;
+      line-height: 1.35;
+      word-break: break-word;
     }
 
     .inbox-empty {
@@ -896,23 +911,45 @@ async function fetchAsanaInbox() {
     if (!asanaWorkspaceGid) return;
 
     // Inbox = alle offenen Tasks mit assignee_status "inbox"
-    // Das entspricht genau der Asana-Inbox-Ansicht
     const resp = await fetch(
       CONFIG.ASANA_PROXY + `tasks?assignee=me&workspace=${asanaWorkspaceGid}&opt_fields=gid,name,modified_at,created_at,assignee_status,due_on,memberships.project.name&completed_since=now&limit=50`
     );
     if (!resp.ok) throw new Error('Inbox-Abfrage fehlgeschlagen');
     const data = await resp.json();
 
-    // Nur Tasks mit Status "inbox" (= noch nicht in My Tasks einsortiert)
     const inboxTasks = (data.data || []).filter(t => t.assignee_status === 'inbox');
-
-    // Sortieren: neueste zuerst (nach modified_at)
     inboxTasks.sort((a, b) => (b.modified_at || '').localeCompare(a.modified_at || ''));
+
+    // Parallel: letzte Story (= letzte Aenderung) fuer jeden Task laden
+    await Promise.all(inboxTasks.map(async task => {
+      try {
+        const r = await fetch(
+          CONFIG.ASANA_PROXY + `tasks/${task.gid}/stories?opt_fields=created_at,created_by.name,text,type,resource_subtype&limit=100`
+        );
+        if (!r.ok) return;
+        const sd = await r.json();
+        const stories = sd.data || [];
+        // Asana liefert chronologisch (alt -> neu). Letzter Eintrag = aktuellste Aenderung
+        if (stories.length > 0) {
+          task.lastStory = stories[stories.length - 1];
+        }
+      } catch (e) { /* Fail silent für einzelne Stories */ }
+    }));
 
     cachedAsanaInbox = inboxTasks;
   } catch (err) {
     console.error('Asana-Inbox-Fehler:', err);
   }
+}
+
+// Asana-Profile-URLs (Mentions) durch lesbares "@..." ersetzen
+function formatStoryText(text) {
+  if (!text) return '';
+  // Mention-URL Format: https://app.asana.com/1/{workspace}/profile/{user_gid}
+  text = text.replace(/https?:\/\/app\.asana\.com\/1\/\d+\/profile\/\d+/g, '@…');
+  // Andere lange Asana-URLs (z.B. Asset-Links) verkuerzen
+  text = text.replace(/https?:\/\/app\.asana\.com\/[^\s]+/g, '🔗');
+  return text.trim();
 }
 
 // Task als erledigt markieren (optimistisches UI-Update)
@@ -965,28 +1002,37 @@ function renderInbox() {
 
   container.innerHTML = cachedAsanaInbox.map(task => {
     const project = task.memberships?.[0]?.project?.name || '';
-    const age = formatInboxAge(new Date(task.modified_at || task.created_at), now);
-    let dueHtml = '';
-    if (task.due_on) {
-      if (task.due_on < todayStr) {
-        dueHtml = `<span class="inbox-due overdue">Überfällig</span>`;
-      } else if (task.due_on === todayStr) {
-        dueHtml = `<span class="inbox-due today">Heute</span>`;
+    const story = task.lastStory;
+    const storyDate = story ? new Date(story.created_at) : new Date(task.modified_at || task.created_at);
+    const age = formatInboxAge(storyDate, now);
+    const author = story?.created_by?.name || '';
+    const storyText = story ? formatStoryText(story.text) : '';
+    const isComment = story?.type === 'comment';
+
+    let activityHtml = '';
+    if (story) {
+      if (isComment) {
+        // Kommentar: "Author: <Kommentartext>"
+        activityHtml = `<div class="inbox-activity">
+          <span class="inbox-author">${escapeHtml(author)}</span>
+          <span class="inbox-action">hat kommentiert:</span>
+        </div>
+        <div class="inbox-text">${escapeHtml(storyText)}</div>`;
       } else {
-        const [,m,d] = task.due_on.split('-').map(Number);
-        dueHtml = `<span class="inbox-due">${d}.${m}.</span>`;
+        // System-Story: text ist bereits formuliert ("X moved this task to Y")
+        activityHtml = `<div class="inbox-text">${escapeHtml(storyText)}</div>`;
       }
     }
 
     return `<div class="inbox-item clickable">
-      <div class="todo-checkbox" onclick="completeAsanaTask('${task.gid}', this.closest('.inbox-item'))"></div>
+      <div class="todo-checkbox" onclick="event.stopPropagation();completeAsanaTask('${task.gid}', this.closest('.inbox-item'))"></div>
       <div class="todo-content">
-        <div class="todo-name">${escapeHtml(task.name)}</div>
-        <div class="inbox-meta">
+        <div class="inbox-context">
           ${project ? `<span class="inbox-project">${escapeHtml(project)}</span>` : ''}
-          ${dueHtml}
           <span class="inbox-time">${age}</span>
         </div>
+        <div class="inbox-task-name">${escapeHtml(task.name)}</div>
+        ${activityHtml}
       </div>
     </div>`;
   }).join('');
