@@ -603,7 +603,7 @@
     </div>
 
     <div class="inbox" id="inbox">
-      <div class="inbox-heading">&#9993; Asana Inbox</div>
+      <div class="inbox-heading">@ Erwähnungen</div>
       <div id="inbox-items"><div class="inbox-empty">Wird geladen...</div></div>
     </div>
   </div>
@@ -956,22 +956,23 @@ async function fetchAsanaInbox() {
   try {
     await fetchAsanaWorkspace();
     await fetchAsanaUser();
-    if (!asanaWorkspaceGid) return;
+    if (!asanaWorkspaceGid || !asanaUserGid) return;
 
-    // Asana hat keinen oeffentlichen Inbox-Endpoint. Workaround:
-    // Tasks die mir zugewiesen sind UND in den letzten 7 Tagen geaendert wurden
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const sinceISO = sevenDaysAgo.toISOString();
+    // Strategie: Mentions finden = Kommentare in Tasks bei denen ich Follower bin
+    // (Asana macht Erwähnte automatisch zu Followern)
+    // Search-API erlaubt "followers.any=<my_gid>"
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const sinceISO = thirtyDaysAgo.toISOString();
 
     const resp = await fetch(
-      CONFIG.ASANA_PROXY + `tasks?assignee=me&workspace=${asanaWorkspaceGid}&opt_fields=gid,name,modified_at,memberships.project.name&modified_since=${sinceISO}&completed_since=now&limit=50`
+      CONFIG.ASANA_PROXY + `workspaces/${asanaWorkspaceGid}/tasks/search?followers.any=${asanaUserGid}&modified_at.after=${sinceISO}&opt_fields=gid,name,memberships.project.name,permalink_url&limit=50`
     );
-    if (!resp.ok) throw new Error('Inbox-Abfrage fehlgeschlagen');
+    if (!resp.ok) throw new Error('Inbox-Search fehlgeschlagen');
     const data = await resp.json();
     const tasks = data.data || [];
 
-    // Parallel: Stories pro Task laden, eigene Aktionen rausfiltern
+    // Parallel: pro Task Kommentar-Stories laden und nach Mentions filtern
     await Promise.all(tasks.map(async task => {
       try {
         const r = await fetch(
@@ -981,21 +982,26 @@ async function fetchAsanaInbox() {
         const sd = await r.json();
         const stories = sd.data || [];
 
-        // Nur Aktionen von ANDEREN (nicht von mir) und in letzten 7 Tagen
-        const relevant = stories.filter(s =>
-          s.created_by?.gid && s.created_by.gid !== asanaUserGid &&
+        // Mention-Filter:
+        // - type=comment (kein system event)
+        // - text enthaelt meine User-GID (Asana-Mention-URL)
+        // - nicht von mir selbst
+        // - in den letzten 30 Tagen
+        const mentions = stories.filter(s =>
+          s.type === 'comment' &&
+          s.created_by?.gid !== asanaUserGid &&
+          (s.text || '').includes(asanaUserGid) &&
           s.created_at >= sinceISO
         );
 
-        if (relevant.length > 0) {
-          task.lastStory = relevant[relevant.length - 1]; // neueste = letzte
+        if (mentions.length > 0) {
+          task.lastStory = mentions[mentions.length - 1]; // neueste Mention
         }
       } catch (e) {}
     }));
 
-    // Nur Tasks behalten, bei denen es echte fremde Aktivitaet gab
+    // Nur Tasks mit Mentions behalten
     const inbox = tasks.filter(t => t.lastStory);
-    // Sortieren nach Story-Zeitstempel desc
     inbox.sort((a, b) => (b.lastStory.created_at || '').localeCompare(a.lastStory.created_at || ''));
 
     cachedAsanaInbox = inbox;
@@ -1055,7 +1061,7 @@ function renderInbox() {
   if (!container) return;
 
   if (!cachedAsanaInbox || cachedAsanaInbox.length === 0) {
-    container.innerHTML = '<div class="inbox-empty">Inbox ist leer</div>';
+    container.innerHTML = '<div class="inbox-empty">Keine Erwähnungen in den letzten 30 Tagen</div>';
     return;
   }
 
@@ -1074,10 +1080,10 @@ function renderInbox() {
     let activityHtml = '';
     if (story) {
       if (isComment) {
-        // Kommentar: "Author: <Kommentartext>"
+        // Mention/Kommentar: "Author hat dich erwähnt:"
         activityHtml = `<div class="inbox-activity">
           <span class="inbox-author">${escapeHtml(author)}</span>
-          <span class="inbox-action">hat kommentiert:</span>
+          <span class="inbox-action">hat dich erwähnt:</span>
         </div>
         <div class="inbox-text">${escapeHtml(storyText)}</div>`;
       } else {
