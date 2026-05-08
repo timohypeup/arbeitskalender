@@ -973,26 +973,31 @@ async function fetchAsanaInbox() {
     const tasks = data.data || [];
 
     // Parallel: pro Task Kommentar-Stories laden und nach Mentions filtern
+    // Asana speichert User-Mentions in html_text als <a data-asana-gid="..." data-asana-type="user">
+    const mentionPattern = new RegExp(`data-asana-gid="${asanaUserGid}"[^>]*data-asana-type="user"`);
+    const mentionPatternAlt = new RegExp(`data-asana-type="user"[^>]*data-asana-gid="${asanaUserGid}"`);
+
     await Promise.all(tasks.map(async task => {
       try {
         const r = await bustingFetch(
-          CONFIG.ASANA_PROXY + `tasks/${task.gid}/stories?opt_fields=created_at,created_by.gid,created_by.name,text,type,resource_subtype&limit=100`
+          CONFIG.ASANA_PROXY + `tasks/${task.gid}/stories?opt_fields=created_at,created_by.gid,created_by.name,text,html_text,type,resource_subtype&limit=100`
         );
         if (!r.ok) return;
         const sd = await r.json();
         const stories = sd.data || [];
 
         // Mention-Filter:
-        // - type=comment (kein system event)
-        // - text enthaelt meine User-GID (Asana-Mention-URL)
+        // - type=comment
+        // - html_text enthaelt einen <a> mit data-asana-gid={meine GID} und data-asana-type="user"
         // - nicht von mir selbst
         // - in den letzten 30 Tagen
-        const mentions = stories.filter(s =>
-          s.type === 'comment' &&
-          s.created_by?.gid !== asanaUserGid &&
-          (s.text || '').includes(asanaUserGid) &&
-          s.created_at >= sinceISO
-        );
+        const mentions = stories.filter(s => {
+          if (s.type !== 'comment') return false;
+          if (s.created_by?.gid === asanaUserGid) return false;
+          if (s.created_at < sinceISO) return false;
+          const html = s.html_text || '';
+          return mentionPattern.test(html) || mentionPatternAlt.test(html);
+        });
 
         if (mentions.length > 0) {
           task.lastStory = mentions[mentions.length - 1]; // neueste Mention
@@ -1010,12 +1015,30 @@ async function fetchAsanaInbox() {
   }
 }
 
-// Asana-Profile-URLs (Mentions) durch lesbares "@..." ersetzen
-function formatStoryText(text) {
-  if (!text) return '';
-  // Mention-URL Format: https://app.asana.com/1/{workspace}/profile/{user_gid}
+// Aus html_text einen lesbaren Comment-Text bauen (Mentions als @Name behalten)
+function formatStoryText(story) {
+  // Bevorzuge html_text — dort sind Mentions als <a>...</a> mit echtem Namen
+  let html = story?.html_text || '';
+  let text = story?.text || '';
+
+  if (html) {
+    // Body-Tags entfernen
+    html = html.replace(/<\/?body[^>]*>/g, '');
+    // <a data-asana-type="user">@Name</a> -> @Name
+    html = html.replace(/<a[^>]*data-asana-type="user"[^>]*>([^<]*)<\/a>/g, '$1');
+    // Bilder durch Icon ersetzen
+    html = html.replace(/<img[^>]*>/g, '🖼️');
+    // Andere Asana-Links durch Linksymbol
+    html = html.replace(/<a[^>]*href="[^"]*"[^>]*>[^<]*<\/a>/g, '🔗');
+    // Verbleibende HTML-Tags strippen
+    html = html.replace(/<[^>]+>/g, '');
+    // HTML-Entities decodieren
+    html = html.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    return html.trim();
+  }
+
+  // Fallback: text-Feld bereinigen
   text = text.replace(/https?:\/\/app\.asana\.com\/1\/\d+\/profile\/\d+/g, '@…');
-  // Andere lange Asana-URLs (z.B. Asset-Links) verkuerzen
   text = text.replace(/https?:\/\/app\.asana\.com\/[^\s]+/g, '🔗');
   return text.trim();
 }
@@ -1030,12 +1053,12 @@ async function completeAsanaTask(gid, sourceEl) {
 
   try {
     const resp = await bustingFetch(CONFIG.ASANA_PROXY + `tasks/${gid}`, {
-      method: 'PATCH',
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: { completed: true } })
     });
 
-    if (!resp.ok) throw new Error('PATCH fehlgeschlagen');
+    if (!resp.ok) throw new Error('PUT fehlgeschlagen');
 
     // Aus Cache entfernen und neu rendern
     if (cachedAsanaTasks) {
@@ -1074,7 +1097,7 @@ function renderInbox() {
     const storyDate = story ? new Date(story.created_at) : new Date(task.modified_at || task.created_at);
     const age = formatInboxAge(storyDate, now);
     const author = story?.created_by?.name || '';
-    const storyText = story ? formatStoryText(story.text) : '';
+    const storyText = story ? formatStoryText(story) : '';
     const isComment = story?.type === 'comment';
 
     let activityHtml = '';
@@ -1445,29 +1468,16 @@ function bustingFetch(url, options = {}) {
   return fetch(url, options);
 }
 
-// Manueller Reload via Button im Header — umgeht Caches komplett
-async function reloadAll() {
+// Manueller Reload via Button im Header — Hard-Reload mit Cache-Buster
+// Wichtig: Bei iPad-PWAs (zum Home-Screen hinzugefuegt) wird HTML/JS aggressiv gecacht.
+// Eine Navigation zu einer URL mit neuem Query-Param erzwingt einen frischen Fetch
+// von index.html aus dem Netzwerk und umgeht damit den PWA-App-Cache komplett.
+function reloadAll() {
   const btn = document.getElementById('reload-btn');
   if (btn) btn.classList.add('spinning');
-  forceRefresh = true;
-  // Asana-GIDs invalidieren, damit users/me und workspaces frisch geholt werden
-  asanaWorkspaceGid = '';
-  asanaTaskListGid = null;
-  asanaUserGid = null;
-  try {
-    if (!DEMO_MODE) {
-      await Promise.all([
-        fetchAllCalendars(),
-        fetchAsanaTasks().catch(() => {}),
-        fetchAsanaInbox().catch(() => {})
-      ]);
-    }
-    currentDay = new Date();
-    renderAll();
-  } finally {
-    forceRefresh = false;
-    if (btn) btn.classList.remove('spinning');
-  }
+  const url = new URL(location.href);
+  url.searchParams.set('_v', Date.now());
+  location.replace(url.toString());
 }
 
 async function init() {
